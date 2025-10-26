@@ -140,7 +140,32 @@ def main():
             channel.remove(elem)
     img = ET.Element(itunes_tag)
     img.set("href", NEW_IMAGE)
-    channel.insert(0, img)
+    channel.insert(0, img)# ---- Replace/insert SHOW-LEVEL DESCRIPTION (channel/description) ----
+new_show_description = """Celestial with Steve Kelley showcases the best in Deep House and Progressive House every week — blending groove, melody, and emotion through carefully curated sets.
+
+Hosted by UK DJ and producer Steve Kelley, the show reflects the sound of his label Celestial Recording, alongside standout releases from imprints like Sublease Music and Bondage Music. Expect an immersive journey through underground cuts, timeless house grooves, and exclusive previews from across the scene.
+
+With nearly two decades of experience behind the decks and in the studio, Steve’s sound has earned recognition from industry legends including Steve Bug and Nick Warren, as well as collaborations with Native Instruments for Traktor Pro. His sets have taken him across the globe — from the UK and Ibiza to Germany, Sweden, and Italy — and Celestial continues to connect listeners worldwide through authentic, emotive electronic music.
+
+Releases on: Sublease Music | Bondage Music | Celestial Recording
+
+Stay connected:
+djstevekelley.com
+Instagram: @celestial.recordings
+Available on Apple Podcasts, SoundCloud, Mixcloud, and Spotify."""
+
+# channel <description>
+ch_desc = channel.find("description")
+if ch_desc is None:
+    ch_desc = ET.SubElement(channel, "description")
+ch_desc.text = new_show_description
+
+# Keep a concise itunes:summary too (plain text; Apple sometimes shows it)
+itunes_summary_tag = "{" + ITUNES_NS + "}summary"
+ch_sum = channel.find(itunes_summary_tag)
+if ch_sum is None:
+    ch_sum = ET.SubElement(channel, itunes_summary_tag)
+ch_sum.text = new_show_description
 
     # For each item: add/replace <content:encoded> with our HTML; keep itunes:summary as plain text
     content_tag = "{" + CONTENT_NS + "}encoded"
