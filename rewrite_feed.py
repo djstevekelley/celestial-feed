@@ -3,7 +3,8 @@ import re, html, requests
 from xml.etree import ElementTree as ET
 
 SOURCE_FEED = "https://feeds.soundcloud.com/users/soundcloud:users:100329/sounds.rss"
-NEW_IMAGE   = "https://www.dropbox.com/scl/fi/fxvd9icshki3uzn61vm1o/CELESTIAL-WITH-STEVE-KELLEY-front.jpg?rlkey=jquwu0g9mu8mwu6ggalu6eusw&raw=1"
+NEW_IMAGE   = "https://djstevekelley.github.io/celestial-feed/artwork/celestial-cover-3000-v2.jpg"
+
 
 ITUNES_NS  = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
