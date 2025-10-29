@@ -3,7 +3,8 @@ import re, html, requests
 from xml.etree import ElementTree as ET
 
 SOURCE_FEED = "https://feeds.soundcloud.com/users/soundcloud:users:100329/sounds.rss"
-NEW_IMAGE   = "https://djstevekelley.github.io/celestial-feed/artwork/celestial-cover-3000-v2.jpg"
+NEW_IMAGE = "https://djstevekelley.github.io/celestial-feed/Celestial_Podcast_Cover_3000x3000.jpg"
+
 
 
 ITUNES_NS  = "http://www.itunes.com/dtds/podcast-1.0.dtd"
