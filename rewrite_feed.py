@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import re, html, requests
+import re, html, requests, sys
 from xml.etree import ElementTree as ET
 
 # ----------- config -----------
@@ -10,7 +10,8 @@ FEED_URL    = "https://djstevekelley.github.io/celestial-feed/feed.xml"
 ITUNES_NS   = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 CONTENT_NS  = "http://purl.org/rss/1.0/modules/content/"
 ATOM_NS     = "http://www.w3.org/2005/Atom"
-PODCAST_NS  = "https://podcastindex.org/namespace/1.0"   # Podcasting 2.0 (optional but makes validator green)
+PODCAST_NS  = "https://podcastindex.org/namespace/1.0"
+XMLNS       = "http://www.w3.org/2000/xmlns/"  # for explicit xmlns:* setting
 
 ET.register_namespace("itunes",   ITUNES_NS)
 ET.register_namespace("content",  CONTENT_NS)
@@ -19,19 +20,17 @@ ET.register_namespace("podcast",  PODCAST_NS)
 
 # ----------- helpers -----------
 def clean_lines(block: str):
-    """Split text block into non-empty lines and drop separator lines."""
     lines = []
     for ln in block.splitlines():
         ln = ln.strip()
-        if not ln:
+        if not ln:             # skip blank
             continue
-        if re.fullmatch(r"[-_]{3,}", ln):
+        if re.fullmatch(r"[-_]{3,}", ln):  # skip separators
             continue
         lines.append(ln)
     return lines
 
 def paragraphs_from_text(text: str):
-    """Split text into paragraphs by blank lines."""
     paras, current = [], []
     for ln in text.splitlines():
         if not ln.strip():
@@ -44,7 +43,6 @@ def paragraphs_from_text(text: str):
     return paras
 
 def format_description(desc: str):
-    """Light HTML formatting for tracklist + spacing around 'Available to stream'."""
     desc = html.unescape(desc)
     parts = []
     lines = clean_lines(desc)
@@ -53,17 +51,14 @@ def format_description(desc: str):
     for ln in lines:
         low = ln.lower()
 
-        # Start tracklist
         if "tracklist" in low and not in_tracklist:
             parts.append("<b>Tracklist:</b><br/>")
             in_tracklist = True
             continue
 
-        # Add a blank line before the availability sentence
         if low.startswith("available to stream"):
             parts.append("<br/>")
 
-        # While inside tracklist, bullet each line until it ends
         if in_tracklist:
             if not ln.strip() or low.startswith("available to stream"):
                 in_tracklist = False
@@ -83,6 +78,11 @@ def main():
     r.raise_for_status()
     root = ET.fromstring(r.content)
 
+    # Make sure the root has explicit xmlns declarations (belt & braces)
+    root.set(f"{{{XMLNS}}}itunes", ITUNES_NS)
+    root.set(f"{{{XMLNS}}}atom", ATOM_NS)
+    root.set(f"{{{XMLNS}}}podcast", PODCAST_NS)
+
     # find <channel>
     channel = None
     for child in root.iter():
@@ -92,9 +92,7 @@ def main():
     if channel is None:
         raise RuntimeError("Could not find <channel> in source feed.")
 
-    # --- Standards additions: Atom self-link + iTunes explicit + Podcast namespace marker ---
-
-    # 1) Ensure single channel-level <atom:link rel="self" .../>
+    # --- Atom self-link ---
     atom_self = None
     for el in channel.findall(f"{{{ATOM_NS}}}link"):
         if el.get("rel") == "self":
@@ -112,24 +110,24 @@ def main():
         atom_self.set("rel", "self")
         atom_self.set("type", "application/rss+xml")
 
-    # 2) Force a single channel-level <itunes:explicit> value
+    # --- itunes:explicit (force single, channel-level) ---
+    # Remove any existing channel-level itunes:explicit
     for el in list(channel):
-        if el.tag == "{" + ITUNES_NS + "}explicit":
+        if el.tag == f"{{{ITUNES_NS}}}explicit":
             channel.remove(el)
-    explicit_el = ET.Element("{" + ITUNES_NS + "}explicit")
-    explicit_el.text = "no"     # use "yes" or "no"; some validators ignore "clean"
+    # Add one clean tag near the top
+    explicit_el = ET.Element(f"{{{ITUNES_NS}}}explicit")
+    explicit_el.text = "no"       # use "yes" if you ever need to
     channel.insert(1, explicit_el)
 
-    # 3) Add a minimal Podcasting 2.0 tag so the "Podcast namespace" shows as present
-    #    (completely safe/optional)
-    podcast_locked = channel.find("{" + PODCAST_NS + "}locked")
-    if podcast_locked is None:
-        podcast_locked = ET.Element("{" + PODCAST_NS + "}locked")
+    # --- Podcasting 2.0 minimal marker (keeps validator green for namespace) ---
+    if channel.find(f"{{{PODCAST_NS}}}locked") is None:
+        podcast_locked = ET.Element(f"{{{PODCAST_NS}}}locked")
         podcast_locked.text = "no"
         channel.insert(2, podcast_locked)
 
-    # replace/insert itunes:image at channel level
-    itunes_image_tag = "{" + ITUNES_NS + "}image"
+    # --- itunes:image (channel-level) ---
+    itunes_image_tag = f"{{{ITUNES_NS}}}image"
     for el in list(channel):
         if el.tag == itunes_image_tag or (el.tag.endswith("image") and "itunes" in el.tag):
             channel.remove(el)
@@ -137,15 +135,20 @@ def main():
     img.set("href", NEW_IMAGE)
     channel.insert(0, img)
 
-    # Rewrite each item description
+    # --- Rewrite each item description ---
     for item in channel.findall("item"):
         desc_el = item.find("description")
         if desc_el is not None and desc_el.text:
             desc_el.text = format_description(desc_el.text)
 
+    # Safety check: ensure itunes:explicit exists in channel before writing
+    if channel.find(f"{{{ITUNES_NS}}}explicit") is None:
+        print("ERROR: itunes:explicit not present in channel before write", file=sys.stderr)
+        sys.exit(1)
+
     # Write output feed.xml
     tree = ET.ElementTree(root)
-    tree.write("feed.xml", encoding="utf-8", xml_declaration=True)
+    tree.write("feed.xml", encoding="UTF-8", xml_declaration=True)
 
 if __name__ == "__main__":
     main()
