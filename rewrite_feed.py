@@ -7,13 +7,15 @@ SOURCE_FEED = "https://feeds.soundcloud.com/users/soundcloud:users:100329/sounds
 NEW_IMAGE   = "https://djstevekelley.github.io/celestial-feed/Celestial_Podcast_Cover_3000x3000.jpg"
 FEED_URL    = "https://djstevekelley.github.io/celestial-feed/feed.xml"
 
-ITUNES_NS  = "http://www.itunes.com/dtds/podcast-1.0.dtd"
-CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
-ATOM_NS    = "http://www.w3.org/2005/Atom"
+ITUNES_NS   = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+CONTENT_NS  = "http://purl.org/rss/1.0/modules/content/"
+ATOM_NS     = "http://www.w3.org/2005/Atom"
+PODCAST_NS  = "https://podcastindex.org/namespace/1.0"   # Podcasting 2.0 (optional but makes validator green)
 
-ET.register_namespace("itunes",  ITUNES_NS)
-ET.register_namespace("content", CONTENT_NS)
-ET.register_namespace("atom",    ATOM_NS)
+ET.register_namespace("itunes",   ITUNES_NS)
+ET.register_namespace("content",  CONTENT_NS)
+ET.register_namespace("atom",     ATOM_NS)
+ET.register_namespace("podcast",  PODCAST_NS)
 
 # ----------- helpers -----------
 def clean_lines(block: str):
@@ -57,15 +59,14 @@ def format_description(desc: str):
             in_tracklist = True
             continue
 
-        # If we hit the "Available to stream" line, add a blank line before it
+        # Add a blank line before the availability sentence
         if low.startswith("available to stream"):
-            parts.append("<br/>")  # blank line before availability block
+            parts.append("<br/>")
 
-        # While inside tracklist, bullet the lines until an empty/other section
+        # While inside tracklist, bullet each line until it ends
         if in_tracklist:
             if not ln.strip() or low.startswith("available to stream"):
                 in_tracklist = False
-                # fall through to normal handling of this ln
             else:
                 parts.append(f"• {ln}<br/>")
                 continue
@@ -73,7 +74,7 @@ def format_description(desc: str):
         parts.append(f"{ln}<br/>")
 
     formatted = "".join(parts)
-    formatted = re.sub(r"(?:<br/>){3,}", "<br/><br/>", formatted)  # compress br runs
+    formatted = re.sub(r"(?:<br/>){3,}", "<br/><br/>", formatted)
     return formatted
 
 # ----------- main -----------
@@ -91,7 +92,8 @@ def main():
     if channel is None:
         raise RuntimeError("Could not find <channel> in source feed.")
 
-    # --- Standards additions: Atom self-link + iTunes explicit ---
+    # --- Standards additions: Atom self-link + iTunes explicit + Podcast namespace marker ---
+
     # 1) Ensure single channel-level <atom:link rel="self" .../>
     atom_self = None
     for el in channel.findall(f"{{{ATOM_NS}}}link"):
@@ -110,13 +112,21 @@ def main():
         atom_self.set("rel", "self")
         atom_self.set("type", "application/rss+xml")
 
-    # 2) Force a single channel-level <itunes:explicit> value (validators prefer 'clean')
+    # 2) Force a single channel-level <itunes:explicit> value
     for el in list(channel):
         if el.tag == "{" + ITUNES_NS + "}explicit":
             channel.remove(el)
     explicit_el = ET.Element("{" + ITUNES_NS + "}explicit")
-    explicit_el.text = "clean"   # use "yes" or "no" if you prefer
+    explicit_el.text = "no"     # use "yes" or "no"; some validators ignore "clean"
     channel.insert(1, explicit_el)
+
+    # 3) Add a minimal Podcasting 2.0 tag so the "Podcast namespace" shows as present
+    #    (completely safe/optional)
+    podcast_locked = channel.find("{" + PODCAST_NS + "}locked")
+    if podcast_locked is None:
+        podcast_locked = ET.Element("{" + PODCAST_NS + "}locked")
+        podcast_locked.text = "no"
+        channel.insert(2, podcast_locked)
 
     # replace/insert itunes:image at channel level
     itunes_image_tag = "{" + ITUNES_NS + "}image"
