@@ -2,14 +2,15 @@
 import re, html, requests
 from xml.etree import ElementTree as ET
 
-# --- configuration ---
+# --- CONFIG ---
 SOURCE_FEED = "https://feeds.soundcloud.com/users/soundcloud:users:100329/sounds.rss"
-NEW_IMAGE   = "https://djstevekelley.github.io/celestial-feed/Celestial_Podcast_Cover_3000x3000.jpg"
+NEW_IMAGE = "https://djstevekelley.github.io/celestial-feed/Celestial_Podcast_Cover_3000x3000.jpg"
 
-ITUNES_NS   = "http://www.itunes.com/dtds/podcast-1.0.dtd"
-CONTENT_NS  = "http://purl.org/rss/1.0/modules/content/"
-ATOM_NS     = "http://www.w3.org/2005/Atom"
-PODCAST_NS  = "https://podcastindex.org/namespace/1.0"
+# --- NAMESPACES ---
+ITUNES_NS = "http://www.itunes.com/dtds/podcast-1.0.dtd"
+CONTENT_NS = "http://purl.org/rss/1.0/modules/content/"
+ATOM_NS = "http://www.w3.org/2005/Atom"
+PODCAST_NS = "https://podcastindex.org/namespace/1.0"
 
 ET.register_namespace("itunes", ITUNES_NS)
 ET.register_namespace("content", CONTENT_NS)
@@ -17,50 +18,33 @@ ET.register_namespace("atom", ATOM_NS)
 ET.register_namespace("podcast", PODCAST_NS)
 
 
-# --- helpers ---
+# --- HELPERS ---
 def clean_lines(block: str):
     lines = []
     for ln in block.splitlines():
         ln = ln.strip()
-        if not ln:
-            continue
-        if re.fullmatch(r"[-_]{3,}", ln):
+        if not ln or re.fullmatch(r"[-_]{3,}", ln):
             continue
         lines.append(ln)
     return lines
 
 
-def format_description(desc: str):
-    desc = html.unescape(desc)
-    lines = clean_lines(desc)
-    formatted = []
-    in_tracklist = False
-
+def paragraphs_from_text(text: str):
+    lines = clean_lines(text)
+    parts, para = [], []
     for ln in lines:
-        low = ln.lower()
-        if "tracklist" in low and not in_tracklist:
-            formatted.append("<b>Tracklist:</b><br/>")
-            in_tracklist = True
-            continue
-
-        if low.startswith("available to stream"):
-            formatted.append("<br/>")
-
-        if in_tracklist:
-            if not ln.strip() or low.startswith("available to stream"):
-                in_tracklist = False
-            else:
-                formatted.append(f"• {ln}<br/>")
-                continue
-
-        formatted.append(f"{ln}<br/>")
-
-    formatted = "".join(formatted)
-    formatted = re.sub(r"(?:<br/>){3,}", "<br/><br/>", formatted)
-    return formatted
+        if not ln:
+            if para:
+                parts.append("<p>" + " ".join(para) + "</p>")
+                para = []
+        else:
+            para.append(html.escape(ln))
+    if para:
+        parts.append("<p>" + " ".join(para) + "</p>")
+    return "\n".join(parts)
 
 
-# --- main ---
+# --- MAIN ---
 def main():
     r = requests.get(SOURCE_FEED, timeout=30)
     r.raise_for_status()
@@ -75,8 +59,8 @@ def main():
     if channel is None:
         raise RuntimeError("Could not find <channel> in source feed.")
 
-    # --- replace itunes:image ---
-    itunes_tag = "{" + ITUNES_NS + "}image"
+    # replace/insert itunes:image
+    itunes_tag = "{%s}image" % ITUNES_NS
     for elem in list(channel):
         if elem.tag == itunes_tag or (elem.tag.endswith("image") and "itunes" in elem.tag):
             channel.remove(elem)
@@ -84,20 +68,21 @@ def main():
     img.set("href", NEW_IMAGE)
     channel.insert(0, img)
 
-    # --- add <itunes:explicit>no</itunes:explicit> if missing ---
-    explicit_tag = "{" + ITUNES_NS + "}explicit"
-    if not any(el.tag == explicit_tag for el in channel):
-        explicit_el = ET.Element(explicit_tag)
-        explicit_el.text = "no"
-        channel.insert(1, explicit_el)
+    # ensure itunes:explicit exists
+    explicit_tag = "{%s}explicit" % ITUNES_NS
+    found_explicit = any(elem.tag == explicit_tag for elem in channel)
+    if not found_explicit:
+        explicit = ET.Element(explicit_tag)
+        explicit.text = "no"
+        channel.insert(1, explicit)
 
-    # --- reformat episode descriptions ---
-    for item in channel.findall("item"):
-        desc_el = item.find("description")
-        if desc_el is not None and desc_el.text:
-            desc_el.text = format_description(desc_el.text)
+    # ensure podcast namespace tag presence
+    root.set("xmlns:podcast", PODCAST_NS)
 
-    ET.ElementTree(root).write("feed.xml", encoding="UTF-8", xml_declaration=True)
+    # write output XML
+    ET.indent(root)
+    with open("feed.xml", "wb") as f:
+        f.write(ET.tostring(root, encoding="utf-8", xml_declaration=True))
 
 
 if __name__ == "__main__":
