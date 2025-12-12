@@ -10,7 +10,7 @@ FEED_URL    = "https://djstevekelley.github.io/celestial-feed/feed.xml"
 ITUNES_NS   = "http://www.itunes.com/dtds/podcast-1.0.dtd"
 CONTENT_NS  = "http://purl.org/rss/1.0/modules/content/"
 ATOM_NS     = "http://www.w3.org/2005/Atom"
-PODCAST_NS  = "https://podcastindex.org/namespace/1.0"   # Podcasting 2.0 (optional but makes validator green)
+PODCAST_NS  = "https://podcastindex.org/namespace/1.0"
 
 ET.register_namespace("itunes",   ITUNES_NS)
 ET.register_namespace("content",  CONTENT_NS)
@@ -29,19 +29,6 @@ def clean_lines(block: str):
             continue
         lines.append(ln)
     return lines
-
-def paragraphs_from_text(text: str):
-    """Split text into paragraphs by blank lines."""
-    paras, current = [], []
-    for ln in text.splitlines():
-        if not ln.strip():
-            if current:
-                paras.append(" ".join(current)); current = []
-        else:
-            current.append(ln.strip())
-    if current:
-        paras.append(" ".join(current))
-    return paras
 
 def format_description(desc: str):
     """Light HTML formatting for tracklist + spacing around 'Available to stream'."""
@@ -92,8 +79,6 @@ def main():
     if channel is None:
         raise RuntimeError("Could not find <channel> in source feed.")
 
-    # --- Standards additions: Atom self-link + iTunes explicit + Podcast namespace marker ---
-
     # 1) Ensure single channel-level <atom:link rel="self" .../>
     atom_self = None
     for el in channel.findall(f"{{{ATOM_NS}}}link"):
@@ -113,22 +98,22 @@ def main():
         atom_self.set("type", "application/rss+xml")
 
     # 2) Force a single channel-level <itunes:explicit> value
+    #    Apple Support asked for True/False (capitalised)
     for el in list(channel):
         if el.tag == "{" + ITUNES_NS + "}explicit":
             channel.remove(el)
     explicit_el = ET.Element("{" + ITUNES_NS + "}explicit")
-    explicit_el.text = "no"     # use "yes" or "no"; some validators ignore "clean"
+    explicit_el.text = "False"  # <-- Apple-required value
     channel.insert(1, explicit_el)
 
-    # 3) Add a minimal Podcasting 2.0 tag so the "Podcast namespace" shows as present
-    #    (completely safe/optional)
+    # 3) Add a minimal Podcasting 2.0 tag so the "podcast:" namespace is present
     podcast_locked = channel.find("{" + PODCAST_NS + "}locked")
     if podcast_locked is None:
         podcast_locked = ET.Element("{" + PODCAST_NS + "}locked")
         podcast_locked.text = "no"
         channel.insert(2, podcast_locked)
 
-    # replace/insert itunes:image at channel level
+    # 4) replace/insert itunes:image at channel level
     itunes_image_tag = "{" + ITUNES_NS + "}image"
     for el in list(channel):
         if el.tag == itunes_image_tag or (el.tag.endswith("image") and "itunes" in el.tag):
@@ -137,7 +122,7 @@ def main():
     img.set("href", NEW_IMAGE)
     channel.insert(0, img)
 
-    # Rewrite each item description
+    # 5) Rewrite each item description
     for item in channel.findall("item"):
         desc_el = item.find("description")
         if desc_el is not None and desc_el.text:
