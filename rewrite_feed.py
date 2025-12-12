@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import re, html, requests
+import re, html, time, requests
 from xml.etree import ElementTree as ET
 
 # ----------- config -----------
@@ -17,9 +17,20 @@ ET.register_namespace("content",  CONTENT_NS)
 ET.register_namespace("atom",     ATOM_NS)
 ET.register_namespace("podcast",  PODCAST_NS)
 
+# SoundCloud sometimes blocks GitHub runners unless we look like a normal browser.
+DEFAULT_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/126.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+    "Accept-Language": "en-GB,en;q=0.9",
+    "Referer": "https://soundcloud.com/",
+}
+
 # ----------- helpers -----------
 def clean_lines(block: str):
-    """Split text block into non-empty lines and drop separator lines."""
     lines = []
     for ln in block.splitlines():
         ln = ln.strip()
@@ -52,7 +63,7 @@ def format_description(desc: str):
 
         # While inside tracklist, bullet each line until it ends
         if in_tracklist:
-            if not ln.strip() or low.startswith("available to stream"):
+            if (not ln.strip()) or low.startswith("available to stream"):
                 in_tracklist = False
             else:
                 parts.append(f"• {ln}<br/>")
@@ -64,11 +75,45 @@ def format_description(desc: str):
     formatted = re.sub(r"(?:<br/>){3,}", "<br/><br/>", formatted)
     return formatted
 
+def fetch_soundcloud_feed() -> bytes:
+    """
+    Fetch the SoundCloud RSS with retries + cache-busting.
+    GitHub Actions can get 403 occasionally; retries often succeed.
+    """
+    session = requests.Session()
+    session.headers.update(DEFAULT_HEADERS)
+
+    # Try a few variants (plain + cache bust)
+    urls = [
+        SOURCE_FEED,
+        f"{SOURCE_FEED}?_={int(time.time())}",
+        f"{SOURCE_FEED}&_={int(time.time())}" if "?" in SOURCE_FEED else f"{SOURCE_FEED}?_={int(time.time())}",
+    ]
+
+    last_err = None
+    for attempt in range(1, 6):  # 5 attempts total
+        for url in urls:
+            try:
+                resp = session.get(url, timeout=45, allow_redirects=True)
+                # If SoundCloud blocks, we’ll retry
+                if resp.status_code == 403:
+                    last_err = RuntimeError(f"403 Forbidden fetching {url}")
+                    continue
+                resp.raise_for_status()
+                return resp.content
+            except Exception as e:
+                last_err = e
+                continue
+
+        # Backoff before next round
+        time.sleep(min(10, 2 * attempt))
+
+    raise RuntimeError(f"Failed to fetch SoundCloud feed after retries. Last error: {last_err}")
+
 # ----------- main -----------
 def main():
-    r = requests.get(SOURCE_FEED, timeout=30)
-    r.raise_for_status()
-    root = ET.fromstring(r.content)
+    xml_bytes = fetch_soundcloud_feed()
+    root = ET.fromstring(xml_bytes)
 
     # find <channel>
     channel = None
@@ -97,24 +142,24 @@ def main():
         atom_self.set("rel", "self")
         atom_self.set("type", "application/rss+xml")
 
-    # 2) Force a single channel-level <itunes:explicit> value
-    #    Apple Support asked for True/False (capitalised)
+    # 2) Force a single channel-level <itunes:explicit>
+    # Apple support said True/False — use "false" for safest compatibility.
     for el in list(channel):
-        if el.tag == "{" + ITUNES_NS + "}explicit":
+        if el.tag == f"{{{ITUNES_NS}}}explicit":
             channel.remove(el)
-    explicit_el = ET.Element("{" + ITUNES_NS + "}explicit")
-    explicit_el.text = "False"  # <-- Apple-required value
+    explicit_el = ET.Element(f"{{{ITUNES_NS}}}explicit")
+    explicit_el.text = "false"
     channel.insert(1, explicit_el)
 
-    # 3) Add a minimal Podcasting 2.0 tag so the "podcast:" namespace is present
-    podcast_locked = channel.find("{" + PODCAST_NS + "}locked")
+    # 3) Podcasting 2.0 tag (validator green; harmless)
+    podcast_locked = channel.find(f"{{{PODCAST_NS}}}locked")
     if podcast_locked is None:
-        podcast_locked = ET.Element("{" + PODCAST_NS + "}locked")
+        podcast_locked = ET.Element(f"{{{PODCAST_NS}}}locked")
         podcast_locked.text = "no"
         channel.insert(2, podcast_locked)
 
     # 4) replace/insert itunes:image at channel level
-    itunes_image_tag = "{" + ITUNES_NS + "}image"
+    itunes_image_tag = f"{{{ITUNES_NS}}}image"
     for el in list(channel):
         if el.tag == itunes_image_tag or (el.tag.endswith("image") and "itunes" in el.tag):
             channel.remove(el)
@@ -122,7 +167,7 @@ def main():
     img.set("href", NEW_IMAGE)
     channel.insert(0, img)
 
-    # 5) Rewrite each item description
+    # 5) Rewrite each item description (neat formatting)
     for item in channel.findall("item"):
         desc_el = item.find("description")
         if desc_el is not None and desc_el.text:
